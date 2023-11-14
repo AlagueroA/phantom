@@ -360,7 +360,7 @@ subroutine set_hier_multiple(m1,m2,semimajoraxis,eccentricity, &
     ! Rotate the substituting binary with orientational parameters
     ! referring to the substituted star's orbital plane
     !
-    if (subst>0) then
+    if (subst<0) then
 
        omega     = rel_arg_peri*pi/180.
        !big_omega = rel_posang_ascnode*pi/180.! + 0.5*pi
@@ -639,74 +639,6 @@ subroutine set_multiple(m1,m2,semimajoraxis,eccentricity, &
     ! velocities
     vxyz_ptmass(:,i1) = vxyz_ptmass(:,nptmass+1)
 
-    !---
-    ! Rotate the substituting binary with orientational parameters
-    ! referring to the substituted star's orbital plane
-    if (subst>0) then
-
-       omega     = rel_arg_peri*pi/180.
-       !big_omega = rel_posang_ascnode*pi/180.! + 0.5*pi
-       inc       = rel_incl*pi/180.
-
-       ! Retrieve eulerian angles of the substituted star orbit's semi-major axis (y axis)
-       if (omega <= pi/2) then
-          beta_y = omega
-          sign_alpha=-1
-          if (inc <= pi) then
-             sign_gamma=1
-          else
-             sign_gamma=-1
-          endif
-       else
-          beta_y = 2*pi-omega
-          sign_alpha=1
-          if (inc <= pi) then
-             sign_gamma=-1
-          else
-             sign_gamma=1
-          endif
-       endif
-       gamma_y=acos(sign_gamma*sin(beta_y)*sin(inc))
-       alpha_y=acos(sign_alpha*sqrt(abs(sin(beta_y)**2-cos(gamma_y)**2))) ! Needs abs cause float approx for cos
-
-       ! Retrieve eulerian angles of the axis perpendicular to the substituted star orbital plane (z axis)
-       beta_z = pi/2.
-       gamma_z = inc
-       alpha_z = pi/2. - inc
-       if (inc <= pi) then
-          gamma_z=inc
-          if (inc <= pi/2.) then
-             alpha_z = pi/2.-inc
-          elseif (inc > pi/2.) then
-             alpha_z = inc-pi/2.
-          endif
-       elseif (inc < 2.*pi .and. inc > pi) then
-          gamma_z = 2.*pi-inc
-          if (inc <= 3.*pi/2.) then
-             alpha_z = inc-pi/2
-          elseif (inc > 3.*pi/2.) then
-             alpha_z = 5.*pi/2.-inc
-          endif
-       endif
-
-       ! Rotate substituting sinks by argument of pericenter around the z axis
-       call gen_rotate(xyzmh_ptmass(1:3,i1),alpha_z,beta_z,gamma_z, arg_peri*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i1),alpha_z,beta_z,gamma_z, arg_peri*pi/180)
-       call gen_rotate(xyzmh_ptmass(1:3,i2),alpha_z,beta_z,gamma_z, arg_peri*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i2),alpha_z,beta_z,gamma_z, arg_peri*pi/180)
-
-       ! Rotate substituting sinks by inclination around the y axis
-       call gen_rotate(xyzmh_ptmass(1:3,i1),alpha_y,beta_y,gamma_y, incl*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i1),alpha_y,beta_y,gamma_y, incl*pi/180)
-       call gen_rotate(xyzmh_ptmass(1:3,i2),alpha_y,beta_y,gamma_y, incl*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i2),alpha_y,beta_y,gamma_y, incl*pi/180)
-
-       ! Rotate substituting sinks by ascending node longitude around the z axis
-       call gen_rotate(xyzmh_ptmass(1:3,i1),alpha_z,beta_z,gamma_z, posang_ascnode*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i1),alpha_z,beta_z,gamma_z, posang_ascnode*pi/180)
-       call gen_rotate(xyzmh_ptmass(1:3,i2),alpha_z,beta_z,gamma_z, posang_ascnode*pi/180)
-       call gen_rotate(vxyz_ptmass(1:3,i2),alpha_z,beta_z,gamma_z, posang_ascnode*pi/180)
-    endif
 
     ! Move the substituting binary's center of mass in the substituted star position
     xyzmh_ptmass(1:3,i1) = xyzmh_ptmass(1:3,i1)+x_subst
