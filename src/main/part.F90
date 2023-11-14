@@ -2,7 +2,7 @@
 ! The Phantom Smoothed Particle Hydrodynamics code, by Daniel Price et al. !
 ! Copyright (c) 2007-2023 The Authors (see AUTHORS)                        !
 ! See LICENCE file for usage and distribution conditions                   !
-! http://phantomsph.bitbucket.io/                                          !
+! http://phantomsph.github.io/                                             !
 !--------------------------------------------------------------------------!
 module part
 !
@@ -39,8 +39,6 @@ module part
  use krome_user, only: krome_nmols
 #endif
  implicit none
- character(len=80), parameter, public :: &  ! module version
-    modid="$Id$"
 !
 !--basic storage needed for read/write of particle data
 !
@@ -57,6 +55,8 @@ module part
  character(len=*), parameter :: vxyzu_label(4) = (/'vx','vy','vz','u '/)
  character(len=*), parameter :: Bxyz_label(3) = (/'Bx','By','Bz'/)
  character(len=*), parameter :: Bevol_label(4) = (/'Bx/rho','By/rho','Bz/rho','psi   '/)
+ character(len=*), parameter :: alphaind_label(3) = (/'alpha   ','alphaloc','div_a   '/)
+
 !
 !--tracking particle IDs
 !
@@ -121,6 +121,13 @@ module part
    (/'h2ratio','abHIq  ','abhpq  ','abeq   ','abco   '/)
 #endif
 !
+!--make a public krome_nmols variable to avoid ifdefs elsewhere
+!
+#ifndef KROME
+ integer, parameter :: krome_nmols = 0
+#endif
+
+!
 !--eos_variables
 !
  real, allocatable  :: eos_vars(:,:)
@@ -159,6 +166,8 @@ module part
  real, allocatable :: dens(:) !dens(maxgr)
  real, allocatable :: metrics(:,:,:,:) !metrics(0:3,0:3,2,maxgr)
  real, allocatable :: metricderivs(:,:,:,:) !metricderivs(0:3,0:3,3,maxgr)
+ real, allocatable :: tmunus(:,:,:) !tmunus(0:3,0:3,maxgr)
+ real, allocatable :: sqrtgs(:) ! sqrtg(maxgr)
 !
 !--sink particles
 !
@@ -200,9 +209,7 @@ module part
  integer, parameter :: ihall = 2 ! eta_hall
  integer, parameter :: iambi = 3 ! eta_ambi
  integer, parameter :: iion  = 4 ! ionisation fraction
-#ifdef NONIDEALMHD
  character(len=*), parameter :: eta_nimhd_label(4) = (/'eta_{OR}','eta_{HE}','eta_{AD}','ne/n    '/)
-#endif
 !
 !-- Ray tracing : optical depth
 !
@@ -268,6 +275,8 @@ module part
 !--derivatives (only needed if derivs is called)
 !
  real, allocatable         :: fxyzu(:,:)
+ real, allocatable         :: fxyz_drag(:,:)
+ real, allocatable         :: fxyz_dragold(:,:)
  real, allocatable         :: dBevol(:,:)
  real(kind=4), allocatable :: divBsymm(:)
  real, allocatable         :: fext(:,:)
@@ -316,79 +325,7 @@ module part
 !  information between MPI threads
 !
  integer, parameter, private :: usedivcurlv = min(ndivcurlv,1)
- integer, parameter :: ipartbufsize = 4 &  ! xyzh
-   +maxvxyzu                            &  ! vxyzu
-   +maxvxyzu                            &  ! vpred
-#ifdef GR
-   +maxvxyzu                            &  ! pxyzu
-   +maxvxyzu                            &  ! ppred
-   +1                                   &  ! dens
-#endif
-   +maxvxyzu                            &  ! fxyzu
-   +3                                   &  ! fext
-   +usedivcurlv                         &  ! divcurlv
-#if !defined(CONST_AV) && !defined(DISC_VISCOSITY)
- +nalpha                              &  ! alphaind
-#endif
-#ifndef ANALYSIS
- +ngradh                              &  ! gradh
-#endif
-#ifdef MHD
- +maxBevol                            &  ! Bevol
-   +maxBevol                            &  ! Bpred
-#endif
-#ifdef RADIATION
- +3*maxirad + maxradprop              &  ! rad,radpred,drad,radprop
-#endif
-#ifndef ANALYSIS
- +1                                   &  ! iphase
-#endif
-#ifdef DUST
- +maxdusttypes                        &  ! dustfrac
-   +maxdustsmall                        &  ! dustevol
-   +maxdustsmall                        &  ! dustpred
-#ifdef DUSTGROWTH
-   +2                                   &  ! dustprop
-   +2                                   &  ! dustproppred
-   +4                                   &  ! dustgasprop
-#endif
-#endif
-#ifdef H2CHEM
- +nabundances                         &  ! abundance
-#endif
-#ifdef DUST_NUCLEATION
- +1                                   &  ! nucleation rate
- +4                                   &  ! normalized moments \hat{K}_i = K_i/n<H>
- +1                                   &  ! mean molecular weight
- +1                                   &  ! gamma
- +1                                   &  ! super saturation ratio
- +1                                   &  ! kappa dust
- +1                                   &  ! alpha
-#endif
-#ifdef KROME
- +krome_nmols                         &  ! abundance
-   +1                                   &  ! variable gamma
-   +1                                   &  ! variable mu
-   +1                                   &  ! temperature
-   +1                                   &  ! cooling rate
-#endif
-   +maxeosvars                          &  ! eos_vars
-#ifdef SINK_RADIATION
-   +1                                   &  ! dust temperature
-   +1                                   &  ! optical depth
-#endif
-#ifdef GRAVITY
- +1                                   &  ! poten
-#endif
-#ifdef IND_TIMESTEPS
- +1                                   &  ! ibin
-   +1                                   &  ! ibin_old
-   +1                                   &  ! ibin_wake
-   +1                                   &  ! dt_in
-   +1                                   &  ! twas
-#endif
- +1                                   &  ! iorig
- +0
+ integer, parameter :: ipartbufsize = 128
 
  real            :: hfact,Bextx,Bexty,Bextz
  integer         :: npart
@@ -436,6 +373,7 @@ module part
 
  private :: hrho4,hrho8,hrho4_pmass,hrho8_pmass,hrhomixed_pmass
  private :: get_ntypes_i4,get_ntypes_i8
+
 contains
 
 subroutine allocate_part
@@ -464,6 +402,8 @@ subroutine allocate_part
  call allocate_array('dens', dens, maxgr)
  call allocate_array('metrics', metrics, 4, 4, 2, maxgr)
  call allocate_array('metricderivs', metricderivs, 4, 4, 3, maxgr)
+ call allocate_array('tmunus', tmunus, 4, 4, maxgr)
+ call allocate_array('sqrtgs', sqrtgs, maxgr)
  call allocate_array('xyzmh_ptmass', xyzmh_ptmass, nsinkproperties, maxptmass)
  call allocate_array('vxyz_ptmass', vxyz_ptmass, 3, maxptmass)
  call allocate_array('fxyz_ptmass', fxyz_ptmass, 4, maxptmass)
@@ -473,6 +413,8 @@ subroutine allocate_part
  call allocate_array('eta_nimhd', eta_nimhd, 4, maxmhdni)
  call allocate_array('luminosity', luminosity, maxlum)
  call allocate_array('fxyzu', fxyzu, maxvxyzu, maxan)
+ call allocate_array('fxyz_drag', fxyz_drag, 3, maxdustan)
+ call allocate_array('fxyz_dragold', fxyz_dragold, 3, maxdustan)
  call allocate_array('dBevol', dBevol, maxBevol, maxmhdan)
  call allocate_array('divBsymm', divBsymm, maxmhdan)
  call allocate_array('fext', fext, 3, maxan)
@@ -502,11 +444,11 @@ subroutine allocate_part
  call allocate_array('nucleation', nucleation, n_nucleation, maxp_nucleation*inucleation)
  call allocate_array('tau', tau, maxp*itau_alloc)
  call allocate_array('tau_lucy', tau_lucy, maxp*itauL_alloc)
-#ifdef KROME
- call allocate_array('abundance', abundance, krome_nmols, maxp_krome)
-#else
- call allocate_array('abundance', abundance, nabundances, maxp_h2)
-#endif
+ if (use_krome) then
+    call allocate_array('abundance', abundance, krome_nmols, maxp_krome)
+ else
+    call allocate_array('abundance', abundance, nabundances, maxp_h2)
+ endif
  call allocate_array('gamma_chem', gamma_chem, maxp_krome)
  call allocate_array('mu_chem', mu_chem, maxp_krome)
  call allocate_array('T_gas_cool', T_gas_cool, maxp_krome)
@@ -541,6 +483,8 @@ subroutine deallocate_part
  if (allocated(dens))         deallocate(dens)
  if (allocated(metrics))      deallocate(metrics)
  if (allocated(metricderivs)) deallocate(metricderivs)
+ if (allocated(tmunus))       deallocate(tmunus)
+ if (allocated(sqrtgs))       deallocate(sqrtgs)
  if (allocated(xyzmh_ptmass)) deallocate(xyzmh_ptmass)
  if (allocated(vxyz_ptmass))  deallocate(vxyz_ptmass)
  if (allocated(fxyz_ptmass))  deallocate(fxyz_ptmass)
@@ -550,6 +494,8 @@ subroutine deallocate_part
  if (allocated(eta_nimhd))    deallocate(eta_nimhd)
  if (allocated(luminosity))   deallocate(luminosity)
  if (allocated(fxyzu))        deallocate(fxyzu)
+ if (allocated(fxyz_drag))    deallocate(fxyz_drag)
+ if (allocated(fxyz_dragold)) deallocate(fxyz_dragold)
  if (allocated(dBevol))       deallocate(dBevol)
  if (allocated(divBsymm))     deallocate(divBsymm)
  if (allocated(fext))         deallocate(fext)
@@ -638,11 +584,11 @@ subroutine init_part
  endif
  if (store_dust_temperature) dust_temp = -1.
  !-- Initialise dust properties to zero
-#ifdef DUSTGROWTH
- dustprop(:,:)    = 0.
- dustgasprop(:,:) = 0.
- VrelVf(:)        = 0.
-#endif
+ if (use_dustgrowth) then
+    dustprop(:,:)    = 0.
+    dustgasprop(:,:) = 0.
+    VrelVf(:)        = 0.
+ endif
  if (ind_timesteps) then
     ibin(:)       = 0
     ibin_old(:)   = 0
@@ -1290,6 +1236,9 @@ subroutine copy_particle_all(src,dst,new_part)
        VrelVf(dst) = VrelVf(src)
        dustproppred(:,dst) = dustproppred(:,src)
     endif
+    fxyz_drag(:,dst) = fxyz_drag(:,src)
+    fxyz_dragold(:,dst) = fxyz_dragold(:,src)
+
  endif
  if (maxp_h2==maxp .or. maxp_krome==maxp) abundance(:,dst) = abundance(:,src)
  eos_vars(:,dst) = eos_vars(:,src)
@@ -1329,7 +1278,7 @@ subroutine reorder_particles(iorder,np)
  integer, intent(in) :: iorder(:)
  integer, intent(in) :: np
 
- integer :: isrc
+ integer :: isrc,nbuf
  real    :: xtemp(ipartbufsize)
 
  do i=1,np
@@ -1341,7 +1290,7 @@ subroutine reorder_particles(iorder,np)
     enddo
 
     ! Swap particles around
-    call fill_sendbuf(i,xtemp)
+    call fill_sendbuf(i,xtemp,nbuf)
     call copy_particle_all(isrc,i,.false.)
     call unfill_buffer(isrc,xtemp)
 
@@ -1447,12 +1396,12 @@ end subroutine change_status_pos
 !  to send to another processor
 !+
 !----------------------------------------------------------------
-subroutine fill_sendbuf(i,xtemp)
+subroutine fill_sendbuf(i,xtemp,nbuf)
  use io,       only:fatal
  use mpiutils, only:fill_buffer
  integer, intent(in)  :: i
  real,    intent(out) :: xtemp(ipartbufsize)
- integer :: nbuf
+ integer, intent(out) :: nbuf
 !
 !--package particle information into one simple wrapper
 !
@@ -1500,6 +1449,8 @@ subroutine fill_sendbuf(i,xtemp)
           call fill_buffer(xtemp, dustproppred(:,i),nbuf)
           call fill_buffer(xtemp, dustgasprop(:,i),nbuf)
        endif
+       call fill_buffer(xtemp,fxyz_drag(:,i),nbuf)
+       call fill_buffer(xtemp,fxyz_dragold(:,i),nbuf)
     endif
     if (maxp_h2==maxp .or. maxp_krome==maxp) then
        call fill_buffer(xtemp, abundance(:,i),nbuf)
@@ -1526,9 +1477,8 @@ subroutine fill_sendbuf(i,xtemp)
     endif
     call fill_buffer(xtemp,iorig(i),nbuf)
  endif
- if (nbuf /= ipartbufsize) call fatal('fill_sendbuf','error in send buffer size')
+ if (nbuf > ipartbufsize) call fatal('fill_sendbuf','error: send buffer size overflow',var='nbuf',ival=nbuf)
 
- return
 end subroutine fill_sendbuf
 
 !----------------------------------------------------------------
@@ -1585,6 +1535,8 @@ subroutine unfill_buffer(ipart,xbuf)
        dustproppred(:,ipart)   = unfill_buf(xbuf,j,2)
        dustgasprop(:,ipart)    = unfill_buf(xbuf,j,4)
     endif
+    fxyz_drag(:,ipart)   = unfill_buf(xbuf,j,3)
+    fxyz_dragold(:,ipart)   = unfill_buf(xbuf,j,3)
  endif
  if (maxp_h2==maxp .or. maxp_krome==maxp) then
     abundance(:,ipart)  = unfill_buf(xbuf,j,nabundances)
@@ -1615,7 +1567,6 @@ subroutine unfill_buffer(ipart,xbuf)
     divBsymm(ipart) = 0.
  endif
 
- return
 end subroutine unfill_buffer
 
 !----------------------------------------------------------------
