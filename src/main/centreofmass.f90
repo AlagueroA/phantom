@@ -31,21 +31,45 @@ contains
 !  (assuming equal mass particles)
 !+
 !----------------------------------------------------------------
-subroutine reset_centreofmass(npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass)
+subroutine reset_centreofmass(npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,only_sinks,sinks_index)
  use io, only:iprint
  integer, intent(in)    :: npart
  real,    intent(inout) :: xyzh(:,:),vxyzu(:,:)
  integer, intent(in),    optional :: nptmass
  real,    intent(inout), optional :: xyzmh_ptmass(:,:), vxyz_ptmass(:,:)
+ integer, optional :: sinks_index(:)
+ logical, optional :: only_sinks
+ logical :: only_sinks_
+ integer, allocatable :: sinks_index_(:)
  real :: xcom(3),vcom(3),xcomold(3),vcomold(3)
  integer :: i
 
+! Check if we consider all the particles or only the sinks
+ if (present(only_sinks)) then
+    only_sinks_ = only_sinks
+ else
+    only_sinks_ = .false.
+ endif
+! Construction of the sinks list if not present
+ if (present(sinks_index)) then
+    allocate(sinks_index_(SIZE(sinks_index)))
+    sinks_index_ = sinks_index
+ else
+    allocate(sinks_index_(nptmass))
+    do i = 1, nptmass
+        sinks_index_(i) = i
+    enddo
+ endif
+
+! Get CoM
  if (present(xyzmh_ptmass) .and. present(vxyz_ptmass) .and. present(nptmass)) then
-    call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass)
+    call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,&
+                          only_sinks=only_sinks_,sinks_index=sinks_index_)
  else
     call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu)
  endif
 
+! Move particles & sinks to put the CoM at the origin
  xcomold = xcom
  vcomold = vcom
  do i=1,npart
@@ -57,7 +81,8 @@ subroutine reset_centreofmass(npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass)
        xyzmh_ptmass(1:3,i) = xyzmh_ptmass(1:3,i) - xcom(1:3)
        vxyz_ptmass(1:3,i)  = vxyz_ptmass(1:3,i) - vcom(1:3)
     enddo
-    call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass)
+    call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,&
+                          only_sinks=only_sinks_,sinks_index=sinks_index_)
  else
     call get_centreofmass(xcom,vcom,npart,xyzh,vxyzu)
  endif
@@ -72,7 +97,7 @@ end subroutine reset_centreofmass
 ! Accounting for sink particles is optional
 !+
 !----------------------------------------------------------------
-subroutine get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,mass)
+subroutine get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz_ptmass,mass,only_sinks,sinks_index)
  use io,       only:id,master
  use dim,      only:maxphase,maxp
  use part,     only:massoftype,iamtype,iphase,igas,isdead_or_accreted
@@ -82,8 +107,12 @@ subroutine get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz
  real,         intent(in)  :: xyzh(:,:),vxyzu(:,:)
  integer,      intent(in),  optional :: nptmass
  real,         intent(in),  optional :: xyzmh_ptmass(:,:), vxyz_ptmass(:,:)
+ integer, optional, intent(in) :: sinks_index(:)
+ logical, optional :: only_sinks
+ integer, allocatable :: sinks_index_(:)
+ logical :: only_sinks_
  real,         intent(out), optional :: mass
- integer :: i,itype
+ integer :: i,itype,n_sinks,i_sink
  real :: xi,yi,zi,hi
  real(kind=8) :: xpos,ypos,zpos,vxpos,vypos,vzpos
  real(kind=8) :: dm,pmassi,totmass
@@ -96,49 +125,73 @@ subroutine get_centreofmass(xcom,vcom,npart,xyzh,vxyzu,nptmass,xyzmh_ptmass,vxyz
  vzpos = 0.d0
  totmass = 0.d0
  pmassi = massoftype(igas)
+
+! Check if we consider all the particles or only the sinks
+ if (present(only_sinks)) then
+    only_sinks_ = only_sinks
+ else
+    only_sinks_ = .false.
+ endif
+! Construction of the sinks list if not present
+ if (present(sinks_index)) then
+    allocate(sinks_index_(SIZE(sinks_index)))
+    sinks_index_ = sinks_index
+ else
+    allocate(sinks_index_(nptmass))
+    do i = 1, nptmass
+        sinks_index_(i) = i
+    enddo
+ endif
+ n_sinks = SIZE(sinks_index_)
+
 !$omp parallel default(none) &
+!$omp shared(only_sinks_) &
 !$omp shared(maxphase,maxp) &
 !$omp shared(npart,xyzh,vxyzu,iphase,massoftype) &
 !$omp private(i,itype,xi,yi,zi,hi) &
 !$omp firstprivate(pmassi) &
 !$omp reduction(+:xpos,ypos,zpos,vxpos,vypos,vzpos,totmass)
-!$omp do
- do i=1,npart
-    xi = xyzh(1,i)
-    yi = xyzh(2,i)
-    zi = xyzh(3,i)
-    hi = xyzh(4,i)
-    if (.not.isdead_or_accreted(hi)) then
-       if (maxphase==maxp) then
-          itype = iamtype(iphase(i))
-          if (itype > 0) then ! avoid problems if called from ICs
-             pmassi = massoftype(itype)
-          else
-             pmassi = massoftype(igas)
-          endif
-       endif
-       totmass = totmass + pmassi
-       xpos    = xpos  + pmassi*xi
-       ypos    = ypos  + pmassi*yi
-       zpos    = zpos  + pmassi*zi
-       vxpos   = vxpos + pmassi*vxyzu(1,i)
-       vypos   = vypos + pmassi*vxyzu(2,i)
-       vzpos   = vzpos + pmassi*vxyzu(3,i)
-    endif
- enddo
-!$omp enddo
+ if (.not.only_sinks_) then
+    !$omp do
+     do i=1,npart
+        xi = xyzh(1,i)
+        yi = xyzh(2,i)
+        zi = xyzh(3,i)
+        hi = xyzh(4,i)
+        if (.not.isdead_or_accreted(hi)) then
+           if (maxphase==maxp) then
+              itype = iamtype(iphase(i))
+              if (itype > 0) then ! avoid problems if called from ICs
+                 pmassi = massoftype(itype)
+              else
+                 pmassi = massoftype(igas)
+              endif
+           endif
+           totmass = totmass + pmassi
+           xpos    = xpos  + pmassi*xi
+           ypos    = ypos  + pmassi*yi
+           zpos    = zpos  + pmassi*zi
+           vxpos   = vxpos + pmassi*vxyzu(1,i)
+           vypos   = vypos + pmassi*vxyzu(2,i)
+           vzpos   = vzpos + pmassi*vxyzu(3,i)
+        endif
+     enddo
+    !$omp enddo
+ endif
 !$omp end parallel
+
  if (id==master .and. present(xyzmh_ptmass) .and. present(vxyz_ptmass) .and. present(nptmass)) then
-    do i=1,nptmass
-       pmassi = xyzmh_ptmass(4,i)
+    do i=1,n_sinks
+       i_sink = sinks_index_(i)
+       pmassi = xyzmh_ptmass(4,i_sink)
        if (pmassi > 0.) then
           totmass = totmass + pmassi
-          xpos  = xpos  + pmassi*xyzmh_ptmass(1,i)
-          ypos  = ypos  + pmassi*xyzmh_ptmass(2,i)
-          zpos  = zpos  + pmassi*xyzmh_ptmass(3,i)
-          vxpos = vxpos + pmassi*vxyz_ptmass(1,i)
-          vypos = vypos + pmassi*vxyz_ptmass(2,i)
-          vzpos = vzpos + pmassi*vxyz_ptmass(3,i)
+          xpos  = xpos  + pmassi*xyzmh_ptmass(1,i_sink)
+          ypos  = ypos  + pmassi*xyzmh_ptmass(2,i_sink)
+          zpos  = zpos  + pmassi*xyzmh_ptmass(3,i_sink)
+          vxpos = vxpos + pmassi*vxyz_ptmass(1,i_sink)
+          vypos = vypos + pmassi*vxyz_ptmass(2,i_sink)
+          vzpos = vzpos + pmassi*vxyz_ptmass(3,i_sink)
        endif
     enddo
  endif
@@ -166,7 +219,7 @@ end subroutine get_centreofmass
 !  Subroutine to compute com acceleration
 !+
 !----------------------------------------------------------------
-subroutine get_centreofmass_accel(acom,npart,xyzh,fxyzu,fext,nptmass,xyzmh_ptmass,fxyz_ptmass)
+subroutine get_centreofmass_accel(acom,npart,xyzh,fxyzu,fext,nptmass,xyzmh_ptmass,fxyz_ptmass,only_sinks,sinks_index)
  use io,       only:id,master
  use dim,      only:maxphase,maxp
  use part,     only:massoftype,iamtype,iphase,igas,isdead_or_accreted
@@ -176,7 +229,9 @@ subroutine get_centreofmass_accel(acom,npart,xyzh,fxyzu,fext,nptmass,xyzmh_ptmas
  real,         intent(in)  :: xyzh(:,:),fxyzu(:,:),fext(:,:)
  integer,      intent(in),  optional :: nptmass
  real,         intent(in),  optional :: xyzmh_ptmass(:,:), fxyz_ptmass(:,:)
- integer :: i
+ integer, optional, intent(in) :: sinks_index(:)
+ logical, optional, intent(in) :: only_sinks
+ integer :: i,n_sinks,i_sink
  real :: hi
  real(kind=8) :: dm,pmassi,totmass
 
@@ -184,41 +239,58 @@ subroutine get_centreofmass_accel(acom,npart,xyzh,fxyzu,fext,nptmass,xyzmh_ptmas
  acom(:) = 0.
  totmass = 0.
 
+
 !$omp parallel default(none) &
+!$omp shared(only_sinks,sinks_index,n_sinks) &
 !$omp shared(maxphase,maxp,id) &
 !$omp shared(xyzh,fxyzu,fext,npart) &
 !$omp shared(massoftype,iphase,nptmass) &
 !$omp shared(xyzmh_ptmass,fxyz_ptmass) &
-!$omp private(i,pmassi,hi) &
+!$omp private(i,pmassi,hi,i_sink) &
 !$omp reduction(+:acom) &
 !$omp reduction(+:totmass)
-!$omp do
- do i=1,npart
-    hi = xyzh(4,i)
-    if (.not.isdead_or_accreted(hi)) then
-       if (maxphase==maxp) then
-          pmassi = massoftype(iamtype(iphase(i)))
-       else
-          pmassi = massoftype(igas)
-       endif
-       totmass = totmass + pmassi
-       acom(1) = acom(1) + pmassi*(fxyzu(1,i) + fext(1,i))
-       acom(2) = acom(2) + pmassi*(fxyzu(2,i) + fext(2,i))
-       acom(3) = acom(3) + pmassi*(fxyzu(3,i) + fext(3,i))
-    endif
- enddo
-!$omp enddo
+ if (.not.only_sinks) then
+    !$omp do
+     do i=1,npart
+        hi = xyzh(4,i)
+        if (.not.isdead_or_accreted(hi)) then
+           if (maxphase==maxp) then
+              pmassi = massoftype(iamtype(iphase(i)))
+           else
+              pmassi = massoftype(igas)
+           endif
+           totmass = totmass + pmassi
+           acom(1) = acom(1) + pmassi*(fxyzu(1,i) + fext(1,i))
+           acom(2) = acom(2) + pmassi*(fxyzu(2,i) + fext(2,i))
+           acom(3) = acom(3) + pmassi*(fxyzu(3,i) + fext(3,i))
+        endif
+     enddo
+    !$omp enddo
+ endif
+
 !
 ! add acceleration from sink particles
 !
+! Check if some sinks are specified or if all sinks are considered
+ if (present(sinks_index)) then
+    n_sinks = SIZE(sinks_index)
+ else
+    n_sinks = nptmass
+ endif
+
  if (id==master) then
     !$omp do
-    do i=1,nptmass
-       pmassi = xyzmh_ptmass(4,i)
+    do i=1,n_sinks
+       if (present(sinks_index)) then
+            i_sink = sinks_index(i)
+       else
+            i_sink = i
+       endif
+       pmassi = xyzmh_ptmass(4,i_sink)
        totmass = totmass + pmassi
-       acom(1) = acom(1) + pmassi*fxyz_ptmass(1,i)
-       acom(2) = acom(2) + pmassi*fxyz_ptmass(2,i)
-       acom(3) = acom(3) + pmassi*fxyz_ptmass(3,i)
+       acom(1) = acom(1) + pmassi*fxyz_ptmass(1,i_sink)
+       acom(2) = acom(2) + pmassi*fxyz_ptmass(2,i_sink)
+       acom(3) = acom(3) + pmassi*fxyz_ptmass(3,i_sink)
     enddo
     !$omp enddo
  endif
@@ -357,10 +429,11 @@ end subroutine correct_bulk_motion
 !------------------------------------------------------------------------
 !
 ! Small routine to calculate the total angular momentum vector of
-! the whole system (particles + sinks)
+! the system.
+! Sinks index can be specify and not taking particles into account is optional.
 !
 !------------------------------------------------------------------------
-subroutine get_total_angular_momentum(xyzh,vxyz,npart,L_tot,xyzmh_ptmass,vxyz_ptmass,npart_ptmass)
+subroutine get_total_angular_momentum(xyzh,vxyz,npart,L_tot,xyzmh_ptmass,vxyz_ptmass,npart_ptmass,only_sinks,sinks_index)
  use vectorutils, only:cross_product3D
  use part,        only:iphase,iamtype,massoftype,isdead_or_accreted
  use mpiutils,    only:reduceall_mpi
@@ -368,38 +441,63 @@ subroutine get_total_angular_momentum(xyzh,vxyz,npart,L_tot,xyzmh_ptmass,vxyz_pt
  real, optional, intent(in):: xyzmh_ptmass(:,:),vxyz_ptmass(:,:)
  integer, intent(in) :: npart
  integer, optional, intent(in) :: npart_ptmass
+ integer, optional, intent(in) :: sinks_index(:)
+ logical, optional :: only_sinks
+ integer, allocatable :: sinks_index_(:)
+ logical :: only_sinks_
  real, intent(out) :: L_tot(3)
- integer           :: ii,itype
+ integer           :: ii,itype,n_sinks,i_sink
  real              :: temp(3),pmassi
 
  L_tot(:) = 0.
+! Check if we consider all the particles or only the sinks
+ if (present(only_sinks)) then
+    only_sinks_ = only_sinks
+ else
+    only_sinks_ = .false.
+ endif
+! Construction of the sinks index list if not present
+ if (present(sinks_index)) then
+    allocate(sinks_index_(SIZE(sinks_index)))
+    sinks_index_ = sinks_index
+ else
+    allocate(sinks_index_(npart_ptmass))
+    do ii = 1, npart_ptmass
+        sinks_index_(ii) = ii
+    enddo
+ endif
+ n_sinks = SIZE(sinks_index_)
 
  ! Calculate the angular momentum from all the particles
  ! Check if particles are dead or have been accreted first
 !$omp parallel default(none) &
+!$omp shared(only_sinks_,sinks_index_,n_sinks) &
 !$omp shared(xyzh,vxyz,npart) &
 !$omp shared(massoftype,iphase) &
 !$omp shared(xyzmh_ptmass,vxyz_ptmass,npart_ptmass) &
-!$omp private(ii,itype,pmassi,temp) &
+!$omp private(ii,itype,pmassi,temp,i_sink) &
 !$omp reduction(+:L_tot)
-!$omp do
- do ii = 1,npart
-    if (.not.isdead_or_accreted(xyzh(4,ii))) then
-       itype = iamtype(iphase(ii))
-       pmassi = massoftype(itype)
-       call cross_product3D(xyzh(1:3,ii),vxyz(1:3,ii),temp)
-       L_tot = L_tot + temp*pmassi
-    endif
- enddo
-!$omp enddo
+ if (.not.only_sinks_) then
+    !$omp do
+     do ii = 1,npart
+        if (.not.isdead_or_accreted(xyzh(4,ii))) then
+           itype = iamtype(iphase(ii))
+           pmassi = massoftype(itype)
+           call cross_product3D(xyzh(1:3,ii),vxyz(1:3,ii),temp)
+           L_tot = L_tot + temp*pmassi
+        endif
+     enddo
+    !$omp enddo
+ endif
 
  ! Calculate from the sinks
  if (present(npart_ptmass)) then
     !$omp do
-    do ii = 1,npart_ptmass
-       call cross_product3D(xyzmh_ptmass(1:3,ii),vxyz_ptmass(1:3,ii),temp)
-       L_tot = L_tot + temp*xyzmh_ptmass(4,ii)
-    enddo
+     do ii = 1,n_sinks
+        i_sink = sinks_index_(ii)
+        call cross_product3D(xyzmh_ptmass(1:3,i_sink),vxyz_ptmass(1:3,i_sink),temp)
+        L_tot = L_tot + temp*xyzmh_ptmass(4,i_sink)
+     enddo
     !$omp enddo
  endif
 !$omp end parallel

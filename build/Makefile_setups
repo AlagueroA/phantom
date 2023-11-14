@@ -168,6 +168,7 @@ ifeq ($(SETUP), disc)
     KNOWN_SETUP=yes
     MULTIRUNFILE= multirun.f90
     IND_TIMESTEPS=yes
+    MODFILE=moddump_rotate_ref.f90
 endif
 
 ifeq ($(SETUP), grtde)
