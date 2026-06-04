@@ -31,8 +31,8 @@ contains
 subroutine do_analysis(dumpfile,numfile,xyzh,vxyz,pmass,npart,time,iunit)
  use io,      only:fatal
  use physcon, only:pi
- use part,    only:xyzmh_ptmass,vxyz_ptmass,nptmass
- use dim,     only:gr
+ use part,    only:xyzmh_ptmass,vxyz_ptmass,nptmass,VrelVf
+ use dim,     only:gr,use_dustgrowth
  use infile_utils, only:open_db_from_file,read_inopt,close_db,inopts
  character(len=*), intent(in)    :: dumpfile
  real,             intent(inout) :: xyzh(:,:),vxyz(:,:)
@@ -48,6 +48,7 @@ subroutine do_analysis(dumpfile,numfile,xyzh,vxyz,pmass,npart,time,iunit)
  real :: rad(nr),h_smooth(nr),sigma(nr),H(nr)
  real :: unitlx(nr),unitly(nr),unitlz(nr),ecc(nr)
  real :: psi(nr),tilt_acc(nr)
+ real :: VrelVfragbin(nr),VmicroVfragbin(nr),VdispVfragbin(nr)
  integer :: ninbin(nr),iexternalforce_read
  logical :: assume_Ltot_is_same_as_zaxis,iexist
  type(inopts), allocatable :: db(:)
@@ -118,30 +119,67 @@ subroutine do_analysis(dumpfile,numfile,xyzh,vxyz,pmass,npart,time,iunit)
     print*,'Resetting assume_Ltot_is_same_as_zaxis=.true. in analysis'
  endif
 
+! Run analysis
  call disc_analysis(xyzh,vxyz,npart,pmass,time,nr,rmin,rmax,G,M_star,&
-                     tilt,tilt_acc,twist,twistprev,psi,H,rad,h_smooth,sigma,unitlx,unitly,unitlz,&
-                     Lx,Ly,Lz,ecc,ninbin,assume_Ltot_is_same_as_zaxis,xyzmh_ptmass,vxyz_ptmass,nptmass)
+        tilt,tilt_acc,twist,twistprev,psi,H,rad,h_smooth,sigma,unitlx,unitly,unitlz,&
+        Lx,Ly,Lz,ecc,ninbin,assume_Ltot_is_same_as_zaxis, &
+        xyzmh_ptmass,vxyz_ptmass,nptmass, &
+        VrelVf,VrelVfragbin,VmicroVfragbin,VdispVfragbin)
 
+
+! Write output
  open(iunit,file=output)
  write(iunit,'("# Analysis data at t = ",es20.12)') time
- write(iunit,"('#',11(1x,'[',i2.2,1x,a11,']',2x))") &
-       1,'radius', &
-       2,'sigma', &
-       3,'<h>/H', &
-       4,'lx', &
-       5,'ly', &
-       6,'lz', &
-       7,'tilt', &
-       8,'twist', &
-       9,'psi', &
-       10,'H/R', &
-       11,'|e|'
 
- do i = 1,nr
-    if (ninbin(i) > 0) then
-       write(iunit,'(13(es18.10,1X))') rad(i),sigma(i),h_smooth(i),unitlx(i),unitly(i),unitlz(i),&
-                                         tilt(i),twistprev(i),psi(i),H(i)/rad(i),ecc(i)
+ if (use_dustgrowth) then
+    write(iunit,"('#',14(1x,'[',i2.2,1x,a11,']',2x))") &
+        1 ,'radius',       &
+        2 ,'sigma',        &
+        3 ,'<h>/H',        &
+        4 ,'lx',           &
+        5 ,'ly',           &
+        6 ,'lz',           &
+        7 ,'tilt',         &
+        8 ,'twist',        &
+        9 ,'psi',          &
+        10,'H/R',          &
+        11,'|e|',          &
+        12,'Vrel/Vfrag',   &
+        13,'Vmicro/Vfrag', &
+        14,'Vdisp/Vfrag'
+ else
+    write(iunit,"('#',11(1x,'[',i2.2,1x,a11,']',2x))") &
+        1 ,'radius', &
+        2 ,'sigma',  &
+        3 ,'<h>/H',  &
+        4 ,'lx',     &
+        5 ,'ly',     &
+        6 ,'lz',     &
+        7 ,'tilt',   &
+        8 ,'twist',  &
+        9 ,'psi',    &
+        10,'H/R',    &
+        11,'|e|'
+ endif
+
+ do i = 1, nr
+    if (ninbin(i) <= 0) cycle
+    if (use_dustgrowth) then
+       write(iunit,'(14(es18.10,1X))') &
+           rad(i), sigma(i), h_smooth(i), &
+           unitlx(i), unitly(i), unitlz(i), &
+           tilt(i), twistprev(i), psi(i), &
+           H(i)/rad(i), ecc(i), &
+           VrelVfragbin(i), VmicroVfragbin(i), VdispVfragbin(i)
+    else
+       write(iunit,'(11(es18.10,1X))') &
+           rad(i), sigma(i), h_smooth(i), &
+           unitlx(i), unitly(i), unitlz(i), &
+           tilt(i), twistprev(i), psi(i), &
+           H(i)/rad(i), ecc(i)
     endif
+ enddo
+
 
 ! Printing time and twist for each radius bin
     if (do_precession) then
@@ -164,7 +202,6 @@ subroutine do_analysis(dumpfile,numfile,xyzh,vxyz,pmass,npart,time,iunit)
        close(unit=iprec)
     endif
 
- enddo
 
  close(iunit)
 
