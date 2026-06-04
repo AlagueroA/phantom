@@ -350,7 +350,7 @@ subroutine get_vrelonvfrag(xyzh,vxyzu,vrel,VrelVf,dustgasprop,Vrel_disp)
  !--If statements to compute local ratio vrel/vfrag
  !
  VrelVf(:) = 0. ! default value
- if (ifrag == 0) then
+ if ((ifrag == 0) .or. (ifrag == -1)) then
     if (vref > 0.) then
        VrelVf(1) = vrel/vref ! for pure growth, vrel/vfrag gives vrel in m/s
        VrelVf(2) = Vrel_micro/vref
