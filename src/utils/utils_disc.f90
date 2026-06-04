@@ -21,7 +21,7 @@ module discanalysisutils
  implicit none
 
  character(len=20), parameter, public :: analysistype = 'disc'
- public :: disc_analysis, discgrow_analysis, read_discparams, createbins
+ public :: disc_analysis, read_discparams, createbins
  public :: get_binary_params
 
  private
@@ -37,13 +37,15 @@ contains
 
 subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
                      tilt,tilt_acc,twist,twistprev,psi,H,bin,h_smooth,sigma,unitlx,unitly,unitlz,Lx,Ly,Lz,&
-                     ecc,ninbin,assume_Ltot_is_same_as_zaxis,xyzmh_ptmass,vxyz_ptmass,nptmass)
+                     ecc,ninbin,assume_Ltot_is_same_as_zaxis,xyzmh_ptmass,vxyz_ptmass,nptmass,&
+                     VrelVf,VrelVfragbin,VmicroVfragbin,VdispVfragbin)
  use physcon,        only:pi
  use centreofmass,   only:get_total_angular_momentum,reset_centreofmass
  use externalforces, only:iext_einsteinprec
  use options,        only:iexternalforce
  use vectorutils,    only:rotatevec
  use prompting,      only:prompt
+ use dim,            only:use_dustgrowth
  real,    intent(inout) :: xyzh(:,:),vxyz(:,:),pmass,time
  integer, intent(in)    :: nbin,npart
  real,    intent(in)    :: rmin,rmax,G,M_star
@@ -52,7 +54,9 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
  real,    intent(out)   :: tilt(nbin),tilt_acc(nbin),twistprev(nbin)
  real,    intent(out)   :: psi(nbin),H(nbin),ecc(nbin),unitlz(nbin)
  real,    intent(out)   :: sigma(nbin),h_smooth(nbin),unitlx(nbin)
+ real,    intent(out)   :: VrelVfragbin(nbin),VmicroVfragbin(nbin),VdispVfragbin(nbin)
  integer, intent(out)   :: ninbin(nbin)
+ real,    intent(in),  optional   :: VrelVf(:,:)
  real,    intent(inout), optional :: xyzmh_ptmass(:,:),vxyz_ptmass(:,:)
  integer, intent(inout), optional :: nptmass
  real                             :: dbin,angx,angy,angz,unitangz
@@ -101,6 +105,9 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
  twist = 0.0
  twistprev = 0.0
  mu = G*M_star
+ VrelVfragbin(:)  = 0.0
+ VmicroVfragbin(:)= 0.0
+ VdispVfragbin(:) = 0.0
 
  allocate(zsetgas(npart,nbin),stat=iallocerr)
  ! If you don't have enough memory to allocate zsetgas, then calculate H the slow way with less memory.
@@ -171,6 +178,12 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
        Lz(ii)=Lz(ii)+Li(3)
        ecc(ii) = ecc(ii) + ecci
        h_smooth(ii) = h_smooth(ii) + xyzh(4,i)
+
+       if (use_dustgrowth) then
+          VrelVfragbin(ii)  = VrelVfragbin(ii)  + VrelVf(1,i)
+          VmicroVfragbin(ii)= VmicroVfragbin(ii)+ VrelVf(2,i)
+          VdispVfragbin(ii) = VdispVfragbin(ii) + VrelVf(3,i)
+       endif
 
        ninbin(ii) = ninbin(ii) + 1
 
@@ -255,9 +268,18 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
        sigma(i)=0.0
        h_smooth(i) = 0.0
        H(i) = 0.
+       VrelVfragbin(i)  = 0.
+       VmicroVfragbin(i)= 0.
+       VdispVfragbin(i) = 0.
     else
        h_smooth(i) = h_smooth(i)/H(i)
+       VrelVfragbin(i)  = VrelVfragbin(i)  / ninbin(i)
+       VmicroVfragbin(i)= VmicroVfragbin(i)/ ninbin(i)
+       VdispVfragbin(i) = VdispVfragbin(i) / ninbin(i)
     endif
+    !if ((abs(VrelVfragbin(i))>1e11) .or. (abs(VrelVfragbin(i))<1e-11)) VrelVfragbin(i) = 0.
+    !if ((abs(VmicroVfragbin(i))>1e11) .or. (abs(VmicroVfragbin(i))<1e-11)) VmicroVfragbin(i) = 0.
+    !if ((abs(VdispVfragbin(i))>1e11) .or. (abs(VdispVfragbin(i))<1e-11)) VdispVfragbin(i) = 0.
  enddo
 
  ! Calculate the total angular momentum vector and rotate unitl[x,y,z] if required
