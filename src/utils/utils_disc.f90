@@ -42,10 +42,11 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
  use physcon,        only:pi
  use centreofmass,   only:get_total_angular_momentum,reset_centreofmass
  use externalforces, only:iext_einsteinprec
- use options,        only:iexternalforce
+ use options,        only:iexternalforce,use_dustfrac
  use vectorutils,    only:rotatevec
  use prompting,      only:prompt
  use dim,            only:use_dustgrowth
+ use part,           only:iphase,iamdust
  real,    intent(inout) :: xyzh(:,:),vxyz(:,:),pmass,time
  integer, intent(in)    :: nbin,npart
  real,    intent(in)    :: rmin,rmax,G,M_star
@@ -180,9 +181,11 @@ subroutine disc_analysis(xyzh,vxyz,npart,pmass,time,nbin,rmin,rmax,G,M_star,&
        h_smooth(ii) = h_smooth(ii) + xyzh(4,i)
 
        if (use_dustgrowth) then
-          VrelVfragbin(ii)  = VrelVfragbin(ii)  + VrelVf(1,i)
-          VmicroVfragbin(ii)= VmicroVfragbin(ii)+ VrelVf(2,i)
-          VdispVfragbin(ii) = VdispVfragbin(ii) + VrelVf(3,i)
+          if ((use_dustfrac) .or. (iamdust(iphase(i)))) then
+             VrelVfragbin(ii)  = VrelVfragbin(ii)  + VrelVf(1,i)
+             VmicroVfragbin(ii)= VmicroVfragbin(ii)+ VrelVf(2,i)
+             VdispVfragbin(ii) = VdispVfragbin(ii) + VrelVf(3,i)
+          endif
        endif
 
        ninbin(ii) = ninbin(ii) + 1
