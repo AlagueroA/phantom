@@ -2690,7 +2690,7 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
  use neighkdtree,    only:get_distance_from_centre_of_mass
  use kdtree,         only:expand_fgrav_in_taylor_series
  use nicil,          only:nicil_get_dudt_nimhd,nicil_get_dt_nimhd
- use timestep,       only:C_cour,C_cool,C_force,C_rad,bignumber,dtmax,psidecayfac,overcleanfac
+ use timestep,       only:C_cour,C_force,C_rad,bignumber,dtmax,psidecayfac,overcleanfac
  use units,          only:get_c_code
  use eos_shen,       only:eos_shen_get_dTdu
  use metric_tools,   only:unpack_metric
@@ -3145,7 +3145,9 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
 
        ! cooling timestep dt < fac*u/(du/dt)
        if (maxvxyzu >= 4 .and. .not. gr .and. .not. (ieos==23)) then ! not with gr which uses entropy
-          if (eni + dtc*fxyzu(4,i) < epsilon(0.) .and. eni > epsilon(0.)) dtcool = C_cool*abs(eni/fxyzu(4,i))
+          if (eni + dtc*fxyzu(4,i) < epsilon(0.) .and. eni > epsilon(0.)) then
+             fxyzu(4,i) =  fxyzu(4,i)/(1.-dtc*fxyzu(4,i)/eni) ! change dudt to avoid negative energy
+          endif
        endif
 
        ! s entropy timestep to avoid too large s entropy leads to infinite temperature
@@ -3315,6 +3317,7 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
 
     dtcourant = min(dtcourant,dtc)
     dtforce   = min(dtforce,dtf,dtcool,dtdrag,dtdusti,dtclean,dtent)
+
     dtvisc    = min(dtvisc,dtvisci)
     if (mhd_nonideal .and. iamgasi) then
        dtohm  = min(dtohm,  dtohmi  )
@@ -3324,6 +3327,8 @@ subroutine finish_cell_and_store_results(icall,cell,fxyzu,xyzh,vxyzu,poten,dt,dv
     dtmini  = min(dtmini,dti)
     dtmaxi  = max(dtmaxi,dti)
     dtrad   = min(dtrad,dtradi)
+
+
 #endif
  enddo over_parts
 end subroutine finish_cell_and_store_results
