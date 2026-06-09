@@ -956,17 +956,17 @@ subroutine convert_to_twofluid(npart,xyzh,vxyzu,massoftype,npartoftype,np_ratio,
  npart = np_gas + np_dust
 
  !- update memore allocation
- call update_max_sizes(npart)
+ !call update_max_sizes(npart)   !uncomment if it complains about maxp
 
  !- set dust quantities
  do j=1,np_dust
-    ipart = np_gas + j
+    ipart = np_gas + j  !works because gas particles are initially randomly placed in setup_disc
     iloc  = np_ratio*j
 
     xyzh(1,ipart) = xyzh(1,iloc)
     xyzh(2,ipart) = xyzh(2,iloc)
     xyzh(3,ipart) = xyzh(3,iloc)
-    xyzh(4,ipart) = xyzh(4,iloc) * (np_ratio*dust_to_gas/dustfrac(1,iloc))**(1./3.) !- smoothing lengths
+    xyzh(4,ipart) = xyzh(4,iloc) !* (np_ratio*dust_to_gas/dustfrac(1,iloc))**(1./3.) !- smoothing lengths, initial guess is the same as the gas. Phantom will get the smoothing length right after iterating.
 
     !- dust velocities out of the barycentric frame
     vxyzu(1,ipart) = vxyzu(1,iloc) + (1 - dustfrac(1,iloc)) * deltav(1,1,iloc)
