@@ -79,6 +79,13 @@ subroutine test_growth(ntests,npass)
     enddo
  enddo
 
+ !
+ ! testing if severe fragmentation breaks the code with several configs
+ !
+! do i=1,2
+!     call test_severefrag(onefluid=logic(i))
+! enddo
+
  if (id==master) write(*,"(/,a)") '<-- DUSTGROWTH TEST COMPLETE'
 
 end subroutine test_growth
@@ -389,5 +396,57 @@ subroutine write_file_err(step,t,xyzh,gsize,gsize_exact,St,St_exact,npart,prefix
  close(lu)
 
 end subroutine write_file_err
+
+
+! subroutine test_severefrag(onefluid)
+!use part,           only:init_part,igas,idust,npart,xyzh,vxyzu,npartoftype,&
+!                         massoftype,set_particle_type,&
+!                         fxyzu,fext,Bevol,dBevol,dustprop,ddustprop,&
+!                         dustfrac,dustevol,ddustevol,iphase,maxtypes,&
+!                         VrelVf,dustgasprop,Omega_k,alphaind,iamtype,&
+!                         ndustlarge,ndustsmall,rhoh,deltav,this_is_a_test,periodic, &
+!                         npartoftypetot,update_npartoftypetot
+!use step_lf_global, only:step,init_step
+!use deriv,          only:get_derivs_global
+!use energies,       only:compute_energies
+!use testutils,      only:checkvalbuf,checkvalbuf_end
+!use eos,            only:ieos,polyk,gamma,get_spsound
+!use dust,           only:idrag,init_drag
+!use growth,         only:ifrag,init_growth,isnow,vfrag,gsizemincgs,get_size,alpha_dg,ivrelkin
+!use options,        only:alpha,alphamax,use_dustfrac
+!use unifdis,        only:set_unifdis
+!use dim,            only:periodic,mhd,use_dust,maxp,maxalpha
+!use timestep,       only:dtmax
+!use io,             only:iverbose
+!use mpiutils,       only:reduceall_mpi
+!use physcon,        only:au,solarm,Ro,pi,fourpi
+!use units,          only:set_units,udist,unit_density!,unit_velocity
+!use mpidomain,      only:i_belong
+!use checksetup,     only:check_setup
+!
+!integer, intent(inout) :: ntests,npass
+!logical, intent(in)    :: onefluid
+!
+!integer :: nx,nerror,nwarn
+!integer :: itype,npart_previous,i,j,nsteps,modu,noutputs
+!integer :: ncheck(4),nerr(4)
+!real    :: errmax(4)
+!integer :: ierr,iam
+!integer, parameter :: ngrid = 20000
+!
+!logical :: do_output = .false.
+!real    :: deltax,dz,hfact,totmass,rhozero,time
+!real    :: sinit,dens,t,tmax,dt,dtext,dtnew,guillaume,dtgratio,rhog,rhod
+!real, allocatable :: Stcomp(:),Stini(:),cscomp(:),tau(:),s(:),timelim(:)
+!
+!real, parameter :: tolst = 5.e-4
+!real, parameter :: tolcs = 5.e-4
+!real, parameter :: tols  = 5.e-4
+!real, parameter :: tolrho = 5.e-4
+!
+!character(len=15) :: stringfrag
+!character(len=15) :: stringmethod
+!
+!end subroutine test_severefrag
 
 end module testgrowth
