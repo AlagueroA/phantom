@@ -36,7 +36,7 @@ subroutine modify_dump(npart,npartoftype,massoftype,xyzh,vxyzu)
  real   :: rho_threshold
  integer :: i, compt
 
- rho_threshold    = 5e-8     !in code units
+ rho_threshold    = 5e-11     !in code units
 
  !rho_threshold = rho_threshold * 1000 / (100*100*100)  !cgs
  !rho_threshold = rho_threshold * udist*udist*udist / umass   !code units
